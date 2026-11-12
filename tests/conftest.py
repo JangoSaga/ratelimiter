@@ -127,3 +127,11 @@ async def client(app_and_client) -> httpx.AsyncClient:
 @pytest_asyncio.fixture
 async def app(app_and_client):
     return app_and_client[0]
+
+
+@pytest_asyncio.fixture
+async def algo_redis() -> AsyncIterator[aioredis.Redis]:
+    """Raw Redis client for algorithm-level tests (real Redis, no HTTP layer)."""
+    r = aioredis.from_url(TEST_REDIS_URL, decode_responses=True, max_connections=300)
+    yield r
+    await r.aclose()
