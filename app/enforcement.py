@@ -64,6 +64,7 @@ async def enforce_rate_limit(
     algorithm = state.algorithms.get(policy.algorithm)
     decision = await algorithm.allow_request(key.id, policy)
     headers = rate_limit_headers(decision)
+    await state.usage.record(key.id, decision.allowed)
     if not decision.allowed:
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,
