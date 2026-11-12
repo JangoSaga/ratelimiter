@@ -6,7 +6,7 @@ from app.config import Settings, get_settings
 from app.db import make_engine, make_sessionmaker
 from app.ratelimit.registry import AlgorithmRegistry
 from app.redis_client import RedisStats, make_redis
-from app.routers import api_keys, auth, health, protected
+from app.routers import api_keys, auth, health, plans, protected, rate_limits
 from app.services.policies import PolicyService
 
 
@@ -23,7 +23,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.redis = redis
         app.state.redis_stats = RedisStats()
         app.state.algorithms = AlgorithmRegistry(redis)
-        app.state.policies = PolicyService(settings)
+        app.state.policies = PolicyService(settings, redis)
         try:
             yield
         finally:
@@ -34,6 +34,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(health.router)
     app.include_router(auth.router)
     app.include_router(api_keys.router)
+    app.include_router(plans.router)
+    app.include_router(rate_limits.router)
     app.include_router(protected.router)
     return app
 

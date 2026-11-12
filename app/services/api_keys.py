@@ -5,6 +5,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.config import Settings
 from app.models import ApiKey, Plan, User
@@ -66,20 +67,22 @@ async def create_api_key(
         except IntegrityError:  # prefix collision, vanishingly unlikely
             await session.rollback()
             continue
-        await session.refresh(key, ["policy", "plan"])
+        await session.refresh(key, ["policy"])
         return ApiKeyCreatedOut(**to_out(key).model_dump(), key=plaintext)
     raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "could not allocate key")
 
 
 async def get_key_or_404(session: AsyncSession, key_id: uuid.UUID) -> ApiKey:
-    key = await session.get(ApiKey, key_id)
+    key = await session.get(
+        ApiKey, key_id, options=[selectinload(ApiKey.policy)], populate_existing=True
+    )
     if key is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "api key not found")
     return key
 
 
 async def list_keys(session: AsyncSession, user_id: uuid.UUID | None = None) -> list[ApiKey]:
-    stmt = select(ApiKey).order_by(ApiKey.created_at.desc())
+    stmt = select(ApiKey).options(selectinload(ApiKey.policy)).order_by(ApiKey.created_at.desc())
     if user_id is not None:
         stmt = stmt.where(ApiKey.user_id == user_id)
     return list((await session.scalars(stmt)).all())

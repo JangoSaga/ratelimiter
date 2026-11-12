@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
@@ -52,7 +52,10 @@ async def revoke_key(key_id: uuid.UUID, session: AsyncSession = Depends(get_sess
 
 @router.patch("/{key_id}", response_model=ApiKeyOut)
 async def patch_key(
-    key_id: uuid.UUID, body: ApiKeyPatch, session: AsyncSession = Depends(get_session)
+    key_id: uuid.UUID,
+    body: ApiKeyPatch,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
 ) -> ApiKeyOut:
     key = await svc.get_key_or_404(session, key_id)
     if "name" in body.model_fields_set and body.name is not None:
@@ -62,5 +65,6 @@ async def patch_key(
             raise HTTPException(status.HTTP_404_NOT_FOUND, "plan not found")
         key.plan_id = body.plan_id
     await session.commit()
-    await session.refresh(key, ["plan", "policy"])
+    await request.app.state.policies.invalidate([key.id])
+    await session.refresh(key, ["policy"])
     return svc.to_out(key)

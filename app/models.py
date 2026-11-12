@@ -72,10 +72,12 @@ class ApiKey(Base):
     created_at: Mapped[datetime] = _now()
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    # lazy="raise": the hot enforcement path loads only the key row. Admin code loads
+    # relationships explicitly; policy resolution goes through PolicyService and its cache.
     policy: Mapped["RateLimitPolicy | None"] = relationship(
-        back_populates="api_key", uselist=False, lazy="selectin"
+        back_populates="api_key", uselist=False, lazy="raise"
     )
-    plan: Mapped[Plan | None] = relationship(lazy="selectin")
+    plan: Mapped[Plan | None] = relationship(lazy="raise")
 
 
 class RateLimitPolicy(Base):
