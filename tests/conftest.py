@@ -4,6 +4,7 @@ Defaults point at the docker compose services (Postgres 5434, Redis 6381). CI ov
 them with TEST_DATABASE_URL / TEST_REDIS_URL.
 """
 
+import asyncio
 import os
 import subprocess
 import sys
@@ -13,7 +14,6 @@ from pathlib import Path
 
 import asyncpg
 import httpx
-import pytest
 import pytest_asyncio
 import redis.asyncio as aioredis
 from sqlalchemy import text
@@ -66,7 +66,8 @@ async def _schema() -> None:
     """Create the test database and build the schema with the real Alembic migrations."""
     await _ensure_database()
     env = {**os.environ, "DATABASE_URL": TEST_DATABASE_URL}
-    subprocess.run(
+    await asyncio.to_thread(
+        subprocess.run,
         [sys.executable, "-m", "alembic", "upgrade", "head"],
         cwd=ROOT,
         env=env,

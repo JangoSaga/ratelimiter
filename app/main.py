@@ -4,7 +4,8 @@ from fastapi import FastAPI
 
 from app.config import Settings, get_settings
 from app.db import make_engine, make_sessionmaker
-from app.routers import api_keys, auth
+from app.redis_client import RedisStats, make_redis
+from app.routers import api_keys, auth, health
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -13,22 +14,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         engine = make_engine(settings.database_url)
+        redis = make_redis(settings)
         app.state.settings = settings
         app.state.engine = engine
         app.state.sessionmaker = make_sessionmaker(engine)
+        app.state.redis = redis
+        app.state.redis_stats = RedisStats()
         try:
             yield
         finally:
+            await redis.aclose()
             await engine.dispose()
 
     app = FastAPI(title="RateLimiter", version="0.1.0", lifespan=lifespan)
+    app.include_router(health.router)
     app.include_router(auth.router)
     app.include_router(api_keys.router)
-
-    @app.get("/health", tags=["health"])
-    async def health() -> dict[str, str]:
-        return {"status": "ok"}
-
     return app
 
 
