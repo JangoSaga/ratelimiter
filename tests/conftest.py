@@ -39,6 +39,7 @@ def make_settings(**overrides) -> Settings:
         "admin_token": ADMIN_TOKEN,
         "jwt_secret": "test-jwt-secret-0123456789abcdef",
         "usage_flush_interval_seconds": 0,
+        "redis_timeout_seconds": 5.0,
     }
     base.update(overrides)
     return Settings(_env_file=None, **base)
@@ -132,6 +133,10 @@ async def app(app_and_client):
 @pytest_asyncio.fixture
 async def algo_redis() -> AsyncIterator[aioredis.Redis]:
     """Raw Redis client for algorithm-level tests (real Redis, no HTTP layer)."""
-    r = aioredis.from_url(TEST_REDIS_URL, decode_responses=True, max_connections=300)
+    r = aioredis.Redis(
+        connection_pool=aioredis.BlockingConnectionPool.from_url(
+            TEST_REDIS_URL, decode_responses=True, max_connections=32, timeout=60
+        )
+    )
     yield r
     await r.aclose()

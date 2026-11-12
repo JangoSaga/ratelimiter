@@ -92,9 +92,16 @@ async def test_policy_change_on_one_instance_is_seen_by_the_other_immediately():
     ],
 )
 async def test_atomicity_under_contention_from_many_connections(algorithm, policy):
-    """8 separate Redis connection pools x 100 concurrent calls each on ONE client id."""
+    """8 separate Redis connection pools (16 connections each), 800 calls on ONE client id."""
     await _avoid_fixed_window_edge()
-    pools = [aioredis.from_url(TEST_REDIS_URL, decode_responses=True) for _ in range(8)]
+    pools = [
+        aioredis.Redis(
+            connection_pool=aioredis.BlockingConnectionPool.from_url(
+                TEST_REDIS_URL, decode_responses=True, max_connections=16, timeout=60
+            )
+        )
+        for _ in range(8)
+    ]
     try:
         algos = [AlgorithmRegistry(p).get(algorithm) for p in pools]
         cid = uuid.uuid4()
