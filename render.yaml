@@ -1,0 +1,37 @@
+# Render Blueprint. Deploys only after the GitHub CI checks pass (autoDeployTrigger: checksPass).
+databases:
+  - name: ratelimiter-db
+    plan: free
+    postgresMajorVersion: "16"
+    databaseName: ratelimiter
+    user: ratelimiter
+
+services:
+  - type: keyvalue
+    name: ratelimiter-redis
+    plan: free
+    maxmemoryPolicy: noeviction
+    ipAllowList: []   # private network only
+
+  - type: web
+    name: ratelimiter-api
+    runtime: docker
+    plan: free
+    autoDeployTrigger: checksPass
+    healthCheckPath: /health/ready
+    # scripts/start.sh runs migrations, then uvicorn on port 8000.
+    envVars:
+      - key: PORT
+        value: "8000"
+      - key: DATABASE_URL
+        fromDatabase: {name: ratelimiter-db, property: connectionString}
+      - key: REDIS_URL
+        fromService: {type: keyvalue, name: ratelimiter-redis, property: connectionString}
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ADMIN_TOKEN
+        generateValue: true
+      - key: API_KEY_PEPPER
+        generateValue: true
+      - key: REDIS_FAILURE_POLICY
+        value: closed

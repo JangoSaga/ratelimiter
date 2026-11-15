@@ -36,6 +36,15 @@ class Settings(BaseSettings):
     usage_period_seconds: int = 3600
     usage_flush_interval_seconds: float = 15.0
 
+    @field_validator("database_url")
+    @classmethod
+    def _async_driver(cls, v: str) -> str:
+        # Render (and Heroku-style hosts) provide postgres:// or postgresql://.
+        for prefix in ("postgres://", "postgresql://"):
+            if v.startswith(prefix):
+                return "postgresql+asyncpg://" + v[len(prefix) :]
+        return v
+
     @field_validator("redis_timeout_seconds")
     @classmethod
     def _positive(cls, v: float) -> float:

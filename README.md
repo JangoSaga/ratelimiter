@@ -1,10 +1,96 @@
 # RateLimiter
 
+[![CI](https://github.com/JangoSaga/ratelimiter/actions/workflows/ci.yml/badge.svg)](https://github.com/JangoSaga/ratelimiter/actions/workflows/ci.yml)
+
 Distributed API rate limiting service. Clients are identified by API keys, limits come from plans or
 per-key policies, and decisions are made atomically in Redis so any number of API instances share
 one view of each client's usage.
 
 Stack: FastAPI, SQLAlchemy 2 (async), Alembic, PostgreSQL, Redis (Lua scripts), Pydantic v2.
+
+**Live demo:** _coming soon (Render URL will be added after deploy)_
+
+## What this project demonstrates
+
+| Skill | Where to look |
+|---|---|
+| Three rate limiting algorithms behind one interface | `app/ratelimit/` |
+| Atomic decisions with Redis Lua scripts, using Redis time rather than app clocks | `app/ratelimit/*.py` |
+| Correctness under concurrency: 800 parallel calls per algorithm, two app instances sharing Redis | `tests/test_concurrency.py` |
+| Explicit failure policy (fail closed or open) instead of accidental behaviour | `app/redis_client.py`, `tests/test_failure_policy.py` |
+| API key security: shown once, stored only as a keyed hash, constant-time compare | `app/services/api_keys.py`, `app/security.py` |
+| Layered policy resolution with a shared cache and cross-instance invalidation | `app/services/policies.py` |
+| Cheap analytics: count in Redis, batch into PostgreSQL | `app/services/usage.py` |
+| Database-level constraints that mirror application validation | `alembic/versions/0001_initial_schema.py` |
+| Deployable as code | `render.yaml` |
+
+## How it works, in plain language
+
+A rate limiter answers one question per request: "has this client used too much?". Here is
+one request end to end:
+
+1. A client calls the protected endpoint with `X-API-Key`.
+2. The service looks the key up in PostgreSQL by its public prefix and verifies the secret
+   with a keyed hash. A revoked, expired or unknown key all get the same `401`.
+3. It finds the client's **policy**: a custom per-key policy wins, then the plan's policy, then
+   the global default. The result is cached in Redis for a minute.
+4. It runs the policy's algorithm as **one Lua script inside Redis**. Redis runs a script
+   without interleaving other commands, so "read the count, decide, update the count" cannot be
+   split by another request. This is what keeps the limit exact when many API instances serve
+   the same client.
+5. The response carries `X-RateLimit-*` headers. A blocked request gets `429` and `Retry-After`.
+6. The decision is counted in a Redis hash. Every 15 seconds a background task moves those
+   counts into PostgreSQL in one batch, so analytics cost nothing per request.
+
+### Choosing an algorithm
+
+| Algorithm | Behaviour | Use when |
+|---|---|---|
+| Fixed window | Counts per clock window. Cheapest, but allows up to 2x the limit across a window boundary | Cost matters more than precision |
+| Sliding window log | Exact rolling window, but stores one entry per accepted request | You need precision and the limits are modest |
+| Token bucket | Allows bursts up to a capacity, then a steady refill rate | Clients are bursty and that is fine |
+
+## Key design decisions and why
+
+| Decision | Alternative | Why this one |
+|---|---|---|
+| Lua script per decision | Read, then write, from the app | App-side check-then-set races under load. A script is atomic |
+| Time taken from Redis `TIME` | App server clock | Instances with drifting clocks would disagree about window edges |
+| Default to fail closed on Redis outage | Fail open | A limiter exists to protect the backend, and disabling it during an incident is the riskier failure. Configurable per deployment |
+| Rejected requests consume nothing | Count every attempt | A client hammering at the limit must not grow Redis state or lock itself out for longer |
+| Keyed hash (HMAC-SHA256) for API keys | bcrypt or argon2 | The secret is 256 bits of randomness, so a slow KDF adds latency per request and no security |
+| Look the key up in PostgreSQL on every request | Cache keys | Revocation takes effect immediately. A short cache can be added if latency demands it |
+| Counters in Redis, flushed in batches | Write to PostgreSQL per request | Keeps the hot path off the database. The cost is up to one flush interval of lost counts in a crash |
+
+## Deploy to Render
+
+The repo ships a Blueprint, `render.yaml`. This project needs no paid worker, so it can run
+entirely on free plans.
+
+| Render resource | Plan | Notes |
+|---|---|---|
+| `ratelimiter-api` (web) | Free | Docker. `scripts/start.sh` runs migrations, then starts uvicorn on port 8000 (`PORT=8000` is set in the Blueprint) |
+| `ratelimiter-db` (PostgreSQL 16) | Free | Expires after 30 days, deleted after a 14-day grace period unless upgraded |
+| `ratelimiter-redis` (Key Value) | Free | Not persisted: a restart resets all counters and the policy cache |
+
+Steps:
+
+1. Push the repo to GitHub and confirm CI is green. Deploys use `autoDeployTrigger: checksPass`.
+2. In Render choose **New, Blueprint**, select the repo and apply.
+3. `JWT_SECRET`, `ADMIN_TOKEN` and `API_KEY_PEPPER` are generated by Render. Read `ADMIN_TOKEN`
+   from the service's Environment tab to call admin endpoints. Do not change `API_KEY_PEPPER`
+   later, it invalidates every existing key.
+4. Verify: `https://<your-service>.onrender.com/health/ready`, then run the flow in "API usage"
+   with `API` set to your URL and `ADMIN` set to your token.
+
+Notes:
+
+- `DATABASE_URL` may be `postgres://`, `postgresql://` or `postgresql+asyncpg://`. Render supplies
+  the first form and the settings normalise it to the asyncpg driver.
+- With the default `REDIS_FAILURE_POLICY=closed`, requests get `503` while Redis restarts. That
+  is the intended behaviour, not a bug.
+- The free web service sleeps when idle and takes a short while to wake on the next request.
+- If you scale beyond one instance, set `RUN_MIGRATIONS=0` on the extra replicas.
 
 ## Quick start (Docker Compose)
 
